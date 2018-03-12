@@ -26,10 +26,12 @@ struct DynamicFusionApp
         KinFuParams params = KinFuParams::default_params_dynamicfusion();
         kinfu_ = KinFu::Ptr( new KinFu(params) );
 
-
+        // draw a cube
         cv::viz::WCube cube(cv::Vec3d::all(0), cv::Vec3d(params.volume_size), true, cv::viz::Color::apricot());
+        // show this cube
         viz.showWidget("cube", cube, params.volume_pose);
         viz.showWidget("coor", cv::viz::WCoordinateSystem(0.1));
+        // keyboard
         viz.registerKeyboardCallback(KeyboardCallback, this);
 
     }
@@ -77,12 +79,14 @@ struct DynamicFusionApp
         std::vector<cv::String> depths;             // store paths,
         std::vector<cv::String> images;             // store paths,
 
+        // get file names
         cv::glob(dir_name + "/depth", depths);
         cv::glob(dir_name + "/color", images);
 
         std::sort(depths.begin(), depths.end());
         std::sort(images.begin(), images.end());
 
+        // start loop
         for (int i = 0; i < depths.size() && !exit_ && !viz.wasStopped(); i++) {
             image = cv::imread(images[i], CV_LOAD_IMAGE_COLOR);
             depth = cv::imread(depths[i], CV_LOAD_IMAGE_ANYDEPTH);
@@ -91,11 +95,21 @@ struct DynamicFusionApp
 //            {
 //                SampledScopeTime fps(time_ms);
 //                (void) fps;
+            // input: depth image
+            // output: first frame: create: init V and W
+            // output: second frame
             has_image = dynamic_fusion(depth_device_);
 //            }
 
+            //////////////////////////////////////
+            // for debug purpose, show point cloud
+            cv::Mat cloud_host = dynamic_fusion.getCloudHost();
+            viz.showWidget("point cloud", cv::viz::WCloud(cloud_host));
+
+            //////////////////////////////////////
+
             if (has_image)
-                show_raycasted(dynamic_fusion, i);
+                show_raycasted(dynamic_fusion, i); // render model and normal image
 
             show_depth(depth);
             cv::imshow("Image", image);
@@ -105,7 +119,7 @@ struct DynamicFusionApp
             }
 
             int key = cv::waitKey(pause_ ? 0 : 3);
-            show_warp(dynamic_fusion);
+            // show_warp(dynamic_fusion); // show W (point cloud)
             switch (key) {
                 case 't':
                 case 'T' :

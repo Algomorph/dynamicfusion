@@ -159,11 +159,11 @@ void kfusion::KinFu::allocate_buffers()
 
     curr_.depth_pyr.resize(LEVELS);
     curr_.normals_pyr.resize(LEVELS);
-    first_.normals_pyr.resize(LEVELS);
     first_.depth_pyr.resize(LEVELS);
+    first_.normals_pyr.resize(LEVELS);
     prev_.depth_pyr.resize(LEVELS);
     prev_.normals_pyr.resize(LEVELS);
-    first_.normals_pyr.resize(LEVELS);
+    // first_.normals_pyr.resize(LEVELS);
 
     curr_.points_pyr.resize(LEVELS);
     prev_.points_pyr.resize(LEVELS);
@@ -218,17 +218,27 @@ kfusion::Affine3f kfusion::KinFu::getCameraPose (int time) const
     return poses_[time];
 }
 
+cv::Mat kfusion::KinFu::getCloudHost() const {
+    return volume_->get_cloud_host();
+}
+
 bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion::cuda::Image& /*image*/)
 {
     const KinFuParams& p = params_;
-    const int LEVELS = icp_->getUsedLevelsNum();
+    const int LEVELS = icp_->getUsedLevelsNum(); // 4
 
+    // input: depth
+    // output: dist: sqrt(X^2 + Y^2 + Z^2)
     cuda::computeDists(depth, dists_, p.intr);
+    // input: depth
+    // output: curr.depth(filtered)
     cuda::depthBilateralFilter(depth, curr_.depth_pyr[0], p.bilateral_kernel_size, p.bilateral_sigma_spatial, p.bilateral_sigma_depth);
 
+    // not used
     if (p.icp_truncate_depth_dist > 0)
         kfusion::cuda::depthTruncation(curr_.depth_pyr[0], p.icp_truncate_depth_dist);
 
+    // build depth pyramid
     for (int i = 1; i < LEVELS; ++i)
         cuda::depthBuildPyramid(curr_.depth_pyr[i-1], curr_.depth_pyr[i], p.bilateral_sigma_depth);
 
@@ -236,6 +246,9 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
 #if defined USE_DEPTH
         cuda::computeNormalsAndMaskDepth(p.intr(i), curr_.depth_pyr[i], curr_.normals_pyr[i]);
 #else
+        // input: curr.depth
+        // output: curr.points: ((x-x_c)/f) * Z, ((y-y_c)/f) * Z, Z;
+        // output: curr.normals: normal(cross((x,x+1),(y, y+1)))
         cuda::computePointNormals(p.intr(i), curr_.depth_pyr[i], curr_.points_pyr[i], curr_.normals_pyr[i]);
 #endif
 
@@ -244,11 +257,16 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
     //can't perform more on first frame
     if (frame_counter_ == 0)
     {
-
+        // input: dist
+        // create: bind dist to dists_tex
+        // output: V's new TSDF and its weight
         volume_->integrate(dists_, poses_.back(), p.intr);
+        // get point cloud from V to cloud_ and cloud_host_
         volume_->compute_points();
+        // get normals from V to normal_buffer_ and normal_host_
         volume_->compute_normals();
-
+        // input: point cloud (CV_32FC4)
+        // create: warp_.nodes_ and buildKDTree
         warp_->init(volume_->get_cloud_host());
 
         #if defined USE_DEPTH
@@ -282,6 +300,8 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
     auto d = curr_.depth_pyr[0];
     auto pts = curr_.points_pyr[0];
     auto n = curr_.normals_pyr[0];
+    // input: curr depth, points and normal
+    // create: canonical, W, update V
     dynamicfusion(d, pts, n);
 
 
@@ -294,6 +314,7 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
         for (int i = 1; i < LEVELS; ++i)
             resizeDepthNormals(prev_.depth_pyr[i-1], prev_.normals_pyr[i-1], prev_.depth_pyr[i], prev_.normals_pyr[i]);
 #else
+        // from V to points and normals
         volume_->raycast(poses_.back(), p.intr, prev_.points_pyr[0], prev_.normals_pyr[0]);
         for (int i = 1; i < LEVELS; ++i)
             resizePointsNormals(prev_.points_pyr[i-1], prev_.normals_pyr[i-1], prev_.points_pyr[i], prev_.normals_pyr[i]);
@@ -348,7 +369,8 @@ void kfusion::KinFu::dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, c
     cloud.create(depth.rows(), depth.cols());
     normals.create(depth.rows(), depth.cols());
     auto camera_pose = poses_.back();
-    tsdf().raycast(camera_pose, params_.intr, cloud, normals);
+    // gete cloud and normal from V
+    tsdf().raycast(camera_pose, params_.intr, cloud, normals); 
 
     cv::Mat cloud_host(depth.rows(), depth.cols(), CV_32FC4);
     cloud.download(cloud_host.ptr<Point>(), cloud_host.step);

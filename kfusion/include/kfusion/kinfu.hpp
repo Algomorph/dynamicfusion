@@ -74,6 +74,7 @@ namespace kfusion
         void renderImage(cuda::Image& image, const Affine3f& pose, int flags = 0);
 
         Affine3f getCameraPose (int time = -1) const;
+        cv::Mat  getCloudHost() const;
     private:
         void allocate_buffers();
 
