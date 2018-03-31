@@ -29,8 +29,10 @@ struct DynamicFusionApp
         // draw a cube
         cv::viz::WCube cube(cv::Vec3d::all(0), cv::Vec3d(params.volume_size), true, cv::viz::Color::apricot());
         // show this cube
+        std::cout << "---------start show cube" << std::endl;
         viz.showWidget("cube", cube, params.volume_pose);
         viz.showWidget("coor", cv::viz::WCoordinateSystem(0.1));
+        std::cout << "---------start show cube" << std::endl;
         // keyboard
         viz.registerKeyboardCallback(KeyboardCallback, this);
 
@@ -103,9 +105,8 @@ struct DynamicFusionApp
 
             //////////////////////////////////////
             // for debug purpose, show point cloud
-            cv::Mat cloud_host = dynamic_fusion.getCloudHost();
-            viz.showWidget("point cloud", cv::viz::WCloud(cloud_host));
-
+            // cv::Mat cloud_host = dynamic_fusion.getCloudHost();
+            // viz.showWidget("point cloud", cv::viz::WCloud(cloud_host));
             //////////////////////////////////////
 
             if (has_image)
@@ -119,7 +120,9 @@ struct DynamicFusionApp
             }
 
             int key = cv::waitKey(pause_ ? 0 : 3);
-            // show_warp(dynamic_fusion); // show W (point cloud)
+            std::cout << "---------start show warp" << std::endl;
+            show_warp(dynamic_fusion); // show W (point cloud)
+            std::cout << "---------end show warp" << std::endl;
             switch (key) {
                 case 't':
                 case 'T' :

@@ -1,5 +1,6 @@
 #include "precomp.hpp"
 #include <opencv2/highgui/highgui.hpp>
+#include <opencv2/viz/vizcore.hpp>
 
 using namespace std;
 using namespace kfusion;
@@ -267,6 +268,9 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
         volume_->compute_normals();
         // input: point cloud (CV_32FC4)
         // create: warp_.nodes_ and buildKDTree
+        std::cout << "saving..." << std::endl;
+        saveDynPly();
+        
         warp_->init(volume_->get_cloud_host());
 
         #if defined USE_DEPTH
@@ -283,7 +287,7 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
 
     ///////////////////////////////////////////////////////////////////////////////////////////
     // ICP
-    Affine3f affine; // curr -> prev
+    Affine3f affine;
     {
         //ScopeTime time("icp");
 #if defined USE_DEPTH
@@ -295,7 +299,7 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
             return reset(), false;
     }
 
-    poses_.push_back(poses_.back() * affine); // curr -> global
+    poses_.push_back(poses_.back() * affine); // update camera pose
 //    auto d = depth;
     auto d = curr_.depth_pyr[0];
     auto pts = curr_.points_pyr[0];
@@ -314,7 +318,7 @@ bool kfusion::KinFu::operator()(const kfusion::cuda::Depth& depth, const kfusion
         for (int i = 1; i < LEVELS; ++i)
             resizeDepthNormals(prev_.depth_pyr[i-1], prev_.normals_pyr[i-1], prev_.depth_pyr[i], prev_.normals_pyr[i]);
 #else
-        // from V to points and normals
+        // from V to pre points and normals
         volume_->raycast(poses_.back(), p.intr, prev_.points_pyr[0], prev_.normals_pyr[0]);
         for (int i = 1; i < LEVELS; ++i)
             resizePointsNormals(prev_.points_pyr[i-1], prev_.normals_pyr[i-1], prev_.points_pyr[i], prev_.normals_pyr[i]);
@@ -372,8 +376,18 @@ void kfusion::KinFu::dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, c
     // gete cloud and normal from V
     tsdf().raycast(camera_pose, params_.intr, cloud, normals); 
 
+    // download from cloud to cloud_host
     cv::Mat cloud_host(depth.rows(), depth.cols(), CV_32FC4);
     cloud.download(cloud_host.ptr<Point>(), cloud_host.step);
+
+    ////////////////////////////////////////////////////////
+    // for debug popurse
+    // g_canonical.create(depth.rows(), depth.cols(), CV_32FC4);
+    // cloud.download(g_canonical.ptr<Point>(), g_canonical.step);
+    // viz.showWidget("canonical", cv::viz::WCloud(g_canonical));
+    ////////////////////////////////////////////////////////
+
+    // pass cloud_host to canonical and convert it from V to camera coor
     std::vector<Vec3f> canonical(cloud_host.rows * cloud_host.cols);
     auto inverse_pose = camera_pose.inv(cv::DECOMP_SVD);
     for (int i = 0; i < cloud_host.rows; i++)
@@ -383,7 +397,8 @@ void kfusion::KinFu::dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, c
             canonical[i * cloud_host.cols + j] = inverse_pose * canonical[i * cloud_host.cols + j];
         }
 
-
+    // download from cur point cloud to cloud_host and
+    // pass cloud_host to live
     live_frame.download(cloud_host.ptr<Point>(), cloud_host.step);
     std::vector<Vec3f> live(cloud_host.rows * cloud_host.cols);
     for (int i = 0; i < cloud_host.rows; i++)
@@ -392,6 +407,8 @@ void kfusion::KinFu::dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, c
             live[i * cloud_host.cols + j] = cv::Vec3f(point.x, point.y, point.z);
         }
 
+    // download from normals to normal_host and
+    // pass normal_host to canonical_normals
     cv::Mat normal_host(cloud_host.rows, cloud_host.cols, CV_32FC4);
     normals.download(normal_host.ptr<Normal>(), normal_host.step);
 
@@ -404,12 +421,14 @@ void kfusion::KinFu::dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, c
 
     std::vector<Vec3f> canonical_visible(canonical);
 
+    // warp from canonical points to live points
     getWarp().warp(canonical, canonical_normals);
-
+    // optimize canonical and live to update warp
     optimiser_->optimiseWarpData(canonical, canonical_normals, live, canonical_normals); // Normals are not used yet so just send in same data
-
+    // warp again
     getWarp().warp(canonical, canonical_normals);
-//    //ScopeTime time("fusion");
+    // compute difference(ro) between warped canonical and cur depth
+    // then find match between original canonical and warped canonical according to ro  
     tsdf().surface_fusion(getWarp(), canonical, canonical_visible, depth, camera_pose, params_.intr);
 
     cv::Mat depth_cloud(depth.rows(),depth.cols(), CV_16U);
@@ -417,8 +436,125 @@ void kfusion::KinFu::dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, c
     cv::Mat display;
     depth_cloud.convertTo(display, CV_8U, 255.0/4000);
     cv::imshow("Depth diff", display);
+    // get point cloud from V to cloud_host_
     volume_->compute_points();
+    // get normal from V to normal_host_
     volume_->compute_normals();
+}
+
+void kfusion::KinFu::saveDynPly()
+{
+    std::string filename = "test";
+    filename.append(".ply");
+
+    // Open file
+    std::ofstream fs;
+    fs.open (filename.c_str ());
+
+    // Eigen::Vector4f * mapData = dynamicModel.downloadMap();
+    cv::Mat first_frame = volume_->get_cloud_host();
+
+    int validCount = 0;
+
+    for(size_t i = 0; i < first_frame.rows; i+=1)
+        for(size_t j = 0; j < first_frame.cols; j+=1)
+        {
+            auto point = first_frame.at<Point>(i,j);
+            if(!std::isnan(point.x))
+            {
+                validCount++;
+            }
+        }
+
+
+    // for(unsigned int i = 0; i < dynamicModel.lastCount(); i++)
+    // {
+    //     Eigen::Vector4f pos = mapData[(i * 3) + 0];
+
+    //     if(pos[3] > confidenceThreshold)
+    //     {
+    //         validCount++;
+    //     }
+    // }
+
+    // Write header
+    fs << "ply";
+    fs << "\nformat " << "binary_little_endian" << " 1.0";
+
+    // Vertices
+    fs << "\nelement vertex "<< validCount;
+    fs << "\nproperty float x"
+          "\nproperty float y"
+          "\nproperty float z";
+
+    fs << "\nproperty uchar red"
+          "\nproperty uchar green"
+          "\nproperty uchar blue";
+
+    fs << "\nproperty float nx"
+          "\nproperty float ny"
+          "\nproperty float nz";
+
+    fs << "\nproperty float radius";
+
+    fs << "\nend_header\n";
+
+    // Close the file
+    fs.close ();
+
+    // Open file in binary appendable
+    std::ofstream fpout (filename.c_str (), std::ios::app | std::ios::binary);
+
+
+    for(size_t i = 0; i < first_frame.rows; i+=1)
+        for(size_t j = 0; j < first_frame.cols; j+=1)
+        {
+            auto pos = first_frame.at<Point>(i,j);
+
+            if(!std::isnan(pos.x))
+            {
+                // Eigen::Vector4f col = mapData[(i * 3) + 1];
+                // Eigen::Vector4f nor = mapData[(i * 3) + 2];
+                Vec4f nor(1.0f, 1.0f, 1.0f);
+
+                // nor[0] *= -1;
+                // nor[1] *= -1;
+                // nor[2] *= -1;
+
+                float value;
+                memcpy (&value, &pos.x, sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+
+                memcpy (&value, &pos.y, sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+
+                memcpy (&value, &pos.z, sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+
+                unsigned char r = 0;
+                unsigned char g = 0;
+                unsigned char b = 0;
+
+                fpout.write (reinterpret_cast<const char*> (&r), sizeof (unsigned char));
+                fpout.write (reinterpret_cast<const char*> (&g), sizeof (unsigned char));
+                fpout.write (reinterpret_cast<const char*> (&b), sizeof (unsigned char));
+
+                memcpy (&value, &nor[0], sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+
+                memcpy (&value, &nor[1], sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+
+                memcpy (&value, &nor[2], sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+
+                memcpy (&value, &nor[3], sizeof (float));
+                fpout.write (reinterpret_cast<const char*> (&value), sizeof (float));
+            }
+        }
+
+    // Close file
+    fpout.close ();
 }
 
 /**

@@ -73,8 +73,11 @@ namespace kfusion
         void dynamicfusion(cuda::Depth& depth, cuda::Cloud live_frame, cuda::Normals current_normals);
         void renderImage(cuda::Image& image, const Affine3f& pose, int flags = 0);
 
+        void saveDynPly();
+
         Affine3f getCameraPose (int time = -1) const;
         cv::Mat  getCloudHost() const;
+        cv::viz::Viz3d viz;
     private:
         void allocate_buffers();
 
@@ -95,5 +98,7 @@ namespace kfusion
         cv::Ptr<WarpField> warp_;
         std::vector<std::pair<utils::DualQuaternion<float>, utils::DualQuaternion<float>>> edges_;
         cv::Ptr<WarpFieldOptimiser> optimiser_;
+
+        cv::Mat g_canonical;
     };
 }

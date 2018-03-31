@@ -40,6 +40,7 @@ WarpField::~WarpField()
  */
 void WarpField::init(const cv::Mat& first_frame)
 {
+    std::cout << "point nums is: " << first_frame.cols << " * " << first_frame.rows << std::endl;
     nodes_->resize(first_frame.cols * first_frame.rows);
     auto voxel_size = kfusion::KinFuParams::default_params_dynamicfusion().volume_size[0] /
                       kfusion::KinFuParams::default_params_dynamicfusion().volume_dims[0];
@@ -69,6 +70,7 @@ void WarpField::init(const cv::Mat& first_frame)
 void WarpField::init(const std::vector<Vec3f>& first_frame)
 {
     nodes_->resize(first_frame.size());
+    std::cout << "point nums is: " << first_frame.size() << std::endl;
     auto voxel_size = kfusion::KinFuParams::default_params_dynamicfusion().volume_size[0] /
                       kfusion::KinFuParams::default_params_dynamicfusion().volume_dims[0];
 
@@ -182,8 +184,10 @@ void WarpField::warp(std::vector<Vec3f>& points, std::vector<Vec3f>& normals) co
     int i = 0;
     for (auto& point : points)
     {
-        if(std::isnan(point[0]) || std::isnan(normals[i][0]))
+        if(std::isnan(point[0]) || std::isnan(normals[i][0])) {
+            ++i;
             continue;
+        }
         utils::DualQuaternion<float> dqb = DQB(point);
         dqb.transform(point);
         point = warp_to_live_ * point;
