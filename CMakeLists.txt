@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0)
-
+option(BUILD_TESTS ON)
 # ---[ Configurations types
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Possible configurations" FORCE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DOM_STATIC_BUILD -std=c++11 -DFORCE_INLINERS -D_MWAITXINTRIN_H_INCLUDED -Wno-write-strings")
@@ -48,6 +48,7 @@ find_package(OpenCV REQUIRED COMPONENTS core viz highgui calib3d)
 find_package(CUDA REQUIRED)
 find_package(OpenNI)
 find_package(Ceres REQUIRED)
+find_package(ZLIB REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS} ${OPENNI_INCLUDE_DIR} "kfusion/src/utils" "kfusion/include/nanoflann")
 if(OPENNI_FOUND)
     message("FOUND OPENNI AT: ${OPENNI_INCLUDE_DIR}")

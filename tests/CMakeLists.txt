@@ -27,5 +27,6 @@ target_link_libraries(
         ${TERRA_LIBRARIES}
         ${CUDA_CUDART_LIBRARY}
         ${GTEST_BOTH_LIBRARIES}
+        ${ZLIB_LIBRARIES}
         kfusion
 )
